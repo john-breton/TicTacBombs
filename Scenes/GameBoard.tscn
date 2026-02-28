@@ -1,0 +1,20 @@
+[gd_scene format=3 uid="uid://xubkrid2vskq"]
+
+[ext_resource type="Script" uid="uid://b4deyv1dnmo11" path="res://Scripts/GameBoard.gd" id="1_7oe7p"]
+[ext_resource type="Texture2D" uid="uid://biaqfpohn3i3u" path="res://Sprites/x_temp.png" id="2_fkmb8"]
+[ext_resource type="Texture2D" uid="uid://bblyh8x5gngfn" path="res://Sprites/o_temp.png" id="3_y2qi3"]
+[ext_resource type="PackedScene" path="res://Scenes/HUD.tscn" id="4_y2qi3"]
+
+[node name="GameBoard" type="Node2D" unique_id=652636834]
+script = ExtResource("1_7oe7p")
+x_texture = ExtResource("2_fkmb8")
+o_texture = ExtResource("3_y2qi3")
+
+[node name="GridContainer" type="GridContainer" parent="." unique_id=1799098678]
+offset_right = 40.0
+offset_bottom = 40.0
+theme_override_constants/h_separation = 0
+theme_override_constants/v_separation = 0
+columns = 7
+
+[node name="HUD" parent="." unique_id=335783231 instance=ExtResource("4_y2qi3")]

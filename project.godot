@@ -8,11 +8,20 @@
 
 config_version=5
 
+[animation]
+
+compatibility/default_parent_skeleton_in_mesh_instance_3d=true
+
 [application]
 
 config/name="TicTacBombs"
-config/features=PackedStringArray("4.5", "Mobile")
+run/main_scene="res://Scenes/MainMenu.tscn"
+config/features=PackedStringArray("4.6", "Mobile")
 config/icon="res://icon.svg"
+
+[autoload]
+
+GameSettings="*res://Scripts/GameSettings.gd"
 
 [rendering]
 
