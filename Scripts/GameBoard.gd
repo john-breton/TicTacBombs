@@ -42,24 +42,25 @@ const CPU_DELAY_MAX = 0.8
 
 # --- Gravity ---
 var _processing_bomb = false
-const NEW_TILE_BOMB_CHANCE = 0.08  # 8% chance for new tiles to contain a hidden bomb
-const GRAVITY_ANIM_BASE = 0.2     # Base tween duration for 1-row fall
-const GRAVITY_ANIM_PER_ROW = 0.04 # Extra time per additional row
+const NEW_TILE_BOMB_CHANCE = 0.08
+const GRAVITY_ANIM_BASE = 0.2
+const GRAVITY_ANIM_PER_ROW = 0.04
+
+# --- Bomb Preview ---
+var _hovered_pos: Vector2i = Vector2i(-1, -1)
+var _previewed_tiles: Array = []
 
 
 # --- Main Setup Function ---
 func _ready():
-	# Dark background
 	RenderingServer.set_default_clear_color(Color(0.1, 0.1, 0.13))
 
-	# Read settings
 	BOARD_WIDTH = GameSettings.board_size
 	BOARD_HEIGHT = GameSettings.board_size
 	WIN_LENGTH = GameSettings.win_length
 	num_bombs = GameSettings.num_bombs
 	grid_container.columns = BOARD_WIDTH
 
-	# CPU setup
 	vs_cpu = (GameSettings.play_mode == GameSettings.PlayMode.VS_CPU)
 	if vs_cpu:
 		var cpu_script = load("res://Scripts/CPUPlayer.gd")
@@ -73,10 +74,8 @@ func _ready():
 	create_board()
 	_center_board()
 
-	# Re-center and rescale when window resizes
 	get_tree().root.size_changed.connect(_center_board)
 
-	# Wire up the HUD
 	hud.setup(x_texture, o_texture)
 	hud.update_turn(current_player)
 	hud.bomb_selected.connect(_on_hud_bomb_selected)
@@ -84,7 +83,6 @@ func _ready():
 	hud.restart_requested.connect(_on_restart)
 	hud.menu_requested.connect(_on_main_menu)
 
-	# In CPU mode, disable O's bomb clicks (CPU handles its own bombs)
 	if vs_cpu:
 		hud.set_cpu_mode(true)
 
@@ -100,15 +98,12 @@ func _center_board():
 	var viewport_size = get_viewport_rect().size
 	var base_board_size = grid_container.size
 
-	# Reserve space for HUD elements (top bar + bottom inventory panels)
 	var hud_padding = Vector2(60, 260)
 	var available = viewport_size - hud_padding
 
-	# Scale uniformly to fit
 	var scale_factor = min(available.x / base_board_size.x, available.y / base_board_size.y)
 	grid_container.scale = Vector2(scale_factor, scale_factor)
 
-	# Center using scaled dimensions
 	var scaled_size = base_board_size * scale_factor
 	grid_container.position = (viewport_size - scaled_size) / 2
 
@@ -120,10 +115,8 @@ func create_board_data():
 	for y in range(BOARD_HEIGHT):
 		board_data[y] = []
 		board_data[y].resize(BOARD_WIDTH)
-
 		bomb_data[y] = []
 		bomb_data[y].resize(BOARD_WIDTH)
-
 		for x in range(BOARD_WIDTH):
 			board_data[y][x] = Player.NONE
 			bomb_data[y][x] = null
@@ -134,9 +127,10 @@ func create_board():
 	for y in range(BOARD_HEIGHT):
 		for x in range(BOARD_WIDTH):
 			var new_tile = tile_scene.instantiate()
-
 			new_tile.grid_position = Vector2i(x, y)
 			new_tile.tile_clicked.connect(_on_tile_clicked)
+			new_tile.tile_hovered.connect(_on_tile_hovered)
+			new_tile.tile_unhovered.connect(_on_tile_unhovered)
 			grid_container.add_child(new_tile)
 
 
@@ -144,17 +138,13 @@ func create_board():
 func place_hidden_bombs():
 	var bomb_types = [BombType.ROW, BombType.COLUMN, BombType.DIAGONAL]
 	var placed_bombs = 0
-
 	while placed_bombs < num_bombs:
 		var rand_x = randi() % BOARD_WIDTH
 		var rand_y = randi() % BOARD_HEIGHT
-
 		if bomb_data[rand_y][rand_x] == null:
 			var rand_type = bomb_types[randi() % bomb_types.size()]
-
 			bomb_data[rand_y][rand_x] = rand_type
 			placed_bombs += 1
-
 			print("Hiding a %s bomb at (%s, %s)" % [BombType.keys()[rand_type], rand_x, rand_y])
 
 
@@ -166,25 +156,25 @@ func check_for_hidden_bomb(pos: Vector2i, player: Player):
 
 		if player == Player.X:
 			player_x_bombs.append(found_bomb_type)
-			print("Player X inventory: ", player_x_bombs)
 		else:
 			player_o_bombs.append(found_bomb_type)
-			print("Player O inventory: ", player_o_bombs)
 
 		var tile_node = grid_container.get_child(pos.y * BOARD_WIDTH + pos.x)
 		tile_node.play_found_effect()
 		hud.add_bomb(player, found_bomb_type)
-
 		bomb_data[pos.y][pos.x] = null
 
+		SoundManager.play_bomb_found()
 
-# --- The Win-Checking Algorithm ---
+
+# ============================================================
+#  WIN CHECKING
+# ============================================================
+
 func check_for_win(last_move_pos: Vector2i, player: Player) -> bool:
 	var directions = [
-		Vector2i(1, 0),  # Horizontal
-		Vector2i(0, 1),  # Vertical
-		Vector2i(1, 1),  # Diagonal Down-Right
-		Vector2i(1, -1)  # Diagonal Up-Right
+		Vector2i(1, 0), Vector2i(0, 1),
+		Vector2i(1, 1), Vector2i(1, -1)
 	]
 
 	for dir in directions:
@@ -220,6 +210,73 @@ func check_for_win(last_move_pos: Vector2i, player: Player) -> bool:
 	return false
 
 
+## Return the positions forming a winning line through `start_pos` for `player`.
+func get_winning_positions(start_pos: Vector2i, player: Player) -> Array:
+	var directions = [
+		Vector2i(1, 0), Vector2i(0, 1),
+		Vector2i(1, 1), Vector2i(1, -1)
+	]
+
+	for dir in directions:
+		var positions: Array = [start_pos]
+
+		for i in range(1, BOARD_WIDTH):
+			var check_pos = start_pos + dir * i
+			if not _is_valid_pos(check_pos):
+				break
+			var tile_state = board_data[check_pos.y][check_pos.x]
+			if tile_state == player:
+				positions.append(check_pos)
+			elif tile_state == Player.DESTROYED:
+				continue
+			else:
+				break
+
+		for i in range(1, BOARD_WIDTH):
+			var check_pos = start_pos - dir * i
+			if not _is_valid_pos(check_pos):
+				break
+			var tile_state = board_data[check_pos.y][check_pos.x]
+			if tile_state == player:
+				positions.append(check_pos)
+			elif tile_state == Player.DESTROYED:
+				continue
+			else:
+				break
+
+		if positions.size() >= WIN_LENGTH:
+			return positions
+
+	return []
+
+
+## Highlight winning tiles visually.
+func _highlight_win_line(player: Player):
+	# Find all winning positions for this player
+	for y in range(BOARD_HEIGHT):
+		for x in range(BOARD_WIDTH):
+			if board_data[y][x] == player:
+				var positions = get_winning_positions(Vector2i(x, y), player)
+				if positions.size() >= WIN_LENGTH:
+					for pos in positions:
+						var tile = grid_container.get_child(pos.y * BOARD_WIDTH + pos.x)
+						tile.show_win_highlight()
+					return  # Highlight first winning line found
+
+
+## Highlight winning tiles for both players (draw case after bomb).
+func _highlight_all_win_lines():
+	for player in [Player.X, Player.O]:
+		for y in range(BOARD_HEIGHT):
+			for x in range(BOARD_WIDTH):
+				if board_data[y][x] == player:
+					var positions = get_winning_positions(Vector2i(x, y), player)
+					if positions.size() >= WIN_LENGTH:
+						for pos in positions:
+							var tile = grid_container.get_child(pos.y * BOARD_WIDTH + pos.x)
+							tile.show_win_highlight()
+
+
 # --- Draw Detection ---
 func _check_for_draw() -> bool:
 	for y in range(BOARD_HEIGHT):
@@ -229,18 +286,62 @@ func _check_for_draw() -> bool:
 	return true
 
 
-# --- Full-Board Win Scan ---
+# --- Full-Board Win Scan (draw-aware) ---
 func _check_board_for_any_win() -> Player:
+	var x_wins = false
+	var o_wins = false
+
 	for y in range(BOARD_HEIGHT):
 		for x in range(BOARD_WIDTH):
 			var state = board_data[y][x]
-			if state == Player.X or state == Player.O:
-				if check_for_win(Vector2i(x, y), state):
-					return state
+			if state == Player.X and not x_wins:
+				if check_for_win(Vector2i(x, y), Player.X):
+					x_wins = true
+			elif state == Player.O and not o_wins:
+				if check_for_win(Vector2i(x, y), Player.O):
+					o_wins = true
+
+	if x_wins and o_wins:
+		return Player.NONE
+	elif x_wins:
+		return Player.X
+	elif o_wins:
+		return Player.O
 	return Player.NONE
 
 
-# --- Helper for Win Check ---
+func _handle_post_bomb_winner():
+	var x_wins = false
+	var o_wins = false
+
+	for y in range(BOARD_HEIGHT):
+		for x in range(BOARD_WIDTH):
+			var state = board_data[y][x]
+			if state == Player.X and not x_wins:
+				if check_for_win(Vector2i(x, y), Player.X):
+					x_wins = true
+			elif state == Player.O and not o_wins:
+				if check_for_win(Vector2i(x, y), Player.O):
+					o_wins = true
+
+	if x_wins and o_wins:
+		print("Both players win — it's a draw!")
+		_highlight_all_win_lines()
+		hud.show_draw()
+		game_over = true
+		SoundManager.play_draw()
+	elif x_wins:
+		_highlight_win_line(Player.X)
+		hud.show_winner("Player X")
+		game_over = true
+		SoundManager.play_win()
+	elif o_wins:
+		_highlight_win_line(Player.O)
+		hud.show_winner("Player O")
+		game_over = true
+		SoundManager.play_win()
+
+
 func _is_valid_and_matching(pos: Vector2i, player: Player) -> bool:
 	if pos.y < 0 or pos.y >= BOARD_HEIGHT:
 		return false
@@ -249,16 +350,75 @@ func _is_valid_and_matching(pos: Vector2i, player: Player) -> bool:
 	return board_data[pos.y][pos.x] == player
 
 
-# --- Click Handling ---
+# ============================================================
+#  BOMB PREVIEW
+# ============================================================
+
+func _on_tile_hovered(pos: Vector2i):
+	_hovered_pos = pos
+	if current_game_mode == GameMode.USING_BOMB and armed_bomb_type != null:
+		if board_data[pos.y][pos.x] != Player.DESTROYED:
+			_show_bomb_preview(pos)
+
+
+func _on_tile_unhovered(pos: Vector2i):
+	if _hovered_pos == pos:
+		_hovered_pos = Vector2i(-1, -1)
+	_clear_bomb_preview()
+
+
+func _show_bomb_preview(target_pos: Vector2i):
+	_clear_bomb_preview()
+
+	var positions = _get_bomb_affected_positions(armed_bomb_type, target_pos)
+	for pos in positions:
+		var tile = grid_container.get_child(pos.y * BOARD_WIDTH + pos.x)
+		tile.show_bomb_preview()
+		_previewed_tiles.append(tile)
+
+
+func _clear_bomb_preview():
+	for tile in _previewed_tiles:
+		if is_instance_valid(tile):
+			tile.hide_bomb_preview()
+	_previewed_tiles.clear()
+
+
+## Get all non-destroyed positions a bomb would affect.
+func _get_bomb_affected_positions(bomb_type, target_pos: Vector2i) -> Array:
+	var positions: Array = []
+
+	match bomb_type:
+		BombType.ROW:
+			for bx in range(BOARD_WIDTH):
+				if board_data[target_pos.y][bx] != Player.DESTROYED:
+					positions.append(Vector2i(bx, target_pos.y))
+		BombType.COLUMN:
+			for by in range(BOARD_HEIGHT):
+				if board_data[by][target_pos.x] != Player.DESTROYED:
+					positions.append(Vector2i(target_pos.x, by))
+		BombType.DIAGONAL:
+			for dir in [Vector2i(1, 1), Vector2i(1, -1)]:
+				for i in range(-BOARD_WIDTH, BOARD_WIDTH):
+					var p = target_pos + dir * i
+					if _is_valid_pos(p) and board_data[p.y][p.x] != Player.DESTROYED:
+						if not p in positions:
+							positions.append(p)
+
+	return positions
+
+
+# ============================================================
+#  CLICK HANDLING
+# ============================================================
+
 func _on_tile_clicked(pos: Vector2i):
 	if game_over:
 		return
 
-	# Block clicks during CPU turn or bomb/gravity animation
 	if cpu_thinking or _processing_bomb:
 		return
 
-	# In CPU mode, block clicks when it's O's turn
 	if vs_cpu and current_player == Player.O:
 		return
 
@@ -269,13 +429,13 @@ func _on_tile_clicked(pos: Vector2i):
 		if board_data[pos.y][pos.x] == Player.DESTROYED:
 			return
 
+		_clear_bomb_preview()
 		_use_bomb_on_tile(pos)
 		hud.hide_armed()
 
 		current_game_mode = GameMode.PLACING_MARK
 		armed_bomb_type = null
 
-		# Run post-bomb sequence: gravity → refill → animate → win check
 		await _post_bomb_sequence()
 
 		if not game_over:
@@ -296,10 +456,14 @@ func _place_mark(pos: Vector2i, player: Player):
 		board_data[pos.y][pos.x] = Player.O
 		tile_node.set_mark(o_texture)
 
+	SoundManager.play_place_mark()
+
 	if check_for_win(pos, player):
 		print("Player %s Wins!" % Player.keys()[player])
+		_highlight_win_line(player)
 		hud.show_winner("Player %s" % Player.keys()[player])
 		game_over = true
+		SoundManager.play_win()
 
 	check_for_hidden_bomb(pos, player)
 
@@ -308,6 +472,7 @@ func _place_mark(pos: Vector2i, player: Player):
 			print("It's a Draw!")
 			hud.show_draw()
 			game_over = true
+			SoundManager.play_draw()
 		else:
 			_switch_player()
 
@@ -380,7 +545,6 @@ func _execute_cpu_bomb(bomb_type: int, target: Vector2i):
 	hud.hide_armed()
 	armed_bomb_type = null
 
-	# Run post-bomb sequence: gravity → refill → animate → win check
 	await _post_bomb_sequence()
 
 	if not game_over:
@@ -412,12 +576,20 @@ func _on_hud_bomb_selected(bomb_type: int):
 		bombs.remove_at(idx)
 		armed_bomb_type = bomb_type
 		current_game_mode = GameMode.USING_BOMB
+		SoundManager.play_bomb_arm()
 		print("Armed a %s bomb!" % BombType.keys()[bomb_type])
+
+		# Show preview if already hovering a tile
+		if _hovered_pos != Vector2i(-1, -1) and _is_valid_pos(_hovered_pos):
+			if board_data[_hovered_pos.y][_hovered_pos.x] != Player.DESTROYED:
+				_show_bomb_preview(_hovered_pos)
 
 
 func _on_hud_bomb_cancelled():
 	if armed_bomb_type == null:
 		return
+
+	_clear_bomb_preview()
 
 	var bombs = player_x_bombs if current_player == Player.X else player_o_bombs
 	bombs.append(armed_bomb_type)
@@ -427,6 +599,7 @@ func _on_hud_bomb_cancelled():
 
 	armed_bomb_type = null
 	current_game_mode = GameMode.PLACING_MARK
+	SoundManager.play_bomb_cancel()
 
 
 func _on_restart():
@@ -437,9 +610,13 @@ func _on_main_menu():
 	get_tree().change_scene_to_file("res://Scenes/MainMenu.tscn")
 
 
-# --- Bomb Use Logic ---
+# ============================================================
+#  BOMB DETONATION
+# ============================================================
+
 func _use_bomb_on_tile(clicked_pos: Vector2i):
 	print("Using %s bomb at %s" % [BombType.keys()[armed_bomb_type], clicked_pos])
+	SoundManager.play_explosion()
 
 	match armed_bomb_type:
 		BombType.ROW:
@@ -455,11 +632,9 @@ func _explode_row(row_y: int):
 	for x in range(BOARD_WIDTH):
 		_destroy_tile(Vector2i(x, row_y))
 
-
 func _explode_column(col_x: int):
 	for y in range(BOARD_HEIGHT):
 		_destroy_tile(Vector2i(col_x, y))
-
 
 func _explode_diagonal(start_pos: Vector2i, direction: Vector2i):
 	for i in range(BOARD_WIDTH):
@@ -467,7 +642,6 @@ func _explode_diagonal(start_pos: Vector2i, direction: Vector2i):
 		if not _is_valid_pos(pos):
 			break
 		_destroy_tile(pos)
-
 	for i in range(1, BOARD_WIDTH):
 		var pos = start_pos - direction * i
 		if not _is_valid_pos(pos):
@@ -478,15 +652,12 @@ func _explode_diagonal(start_pos: Vector2i, direction: Vector2i):
 func _destroy_tile(pos: Vector2i):
 	if not _is_valid_pos(pos):
 		return
-
 	if board_data[pos.y][pos.x] == Player.DESTROYED:
 		return
 
-	print("Destroying tile at %s" % pos)
 	board_data[pos.y][pos.x] = Player.DESTROYED
 
 	if bomb_data[pos.y][pos.x] != null:
-		print("A hidden bomb was destroyed!")
 		bomb_data[pos.y][pos.x] = null
 
 	var tile_node = grid_container.get_child(pos.y * BOARD_WIDTH + pos.x)
@@ -508,43 +679,33 @@ func _is_valid_pos(pos: Vector2i) -> bool:
 func _post_bomb_sequence():
 	_processing_bomb = true
 
-	# 1. Wait for explosion animations to finish
 	await get_tree().create_timer(0.45).timeout
 
 	if game_over:
 		_processing_bomb = false
 		return
 
-	# 2. Apply gravity: pack surviving tiles down, fill top with new empties
 	var fall_info = _apply_gravity_and_refill()
 
 	if fall_info.is_empty():
-		# Nothing fell — board had no destroyed tiles (shouldn't happen, but safe)
 		_processing_bomb = false
 		return
 
-	# 3. Wait one frame for GridContainer to settle layout after visual updates
 	await get_tree().process_frame
 
-	# 4. Calculate row height from actual tile dimensions
 	var first_tile = grid_container.get_child(0)
 	var tile_h = first_tile.size.y
 	var v_sep = grid_container.get_theme_constant("v_separation")
 	var row_height = tile_h + v_sep
 
-	# 5. Animate each tile dropping from its pre-gravity position to its new position
 	var max_duration = 0.0
 	for info in fall_info:
 		var node: Control = info["node"]
 		var rows: int = info["rows"]
 
-		# Remember where the container placed this tile (its correct final position)
 		var target_y = node.position.y
-
-		# Offset it upward so it appears at its old row
 		node.position.y = target_y - rows * row_height
 
-		# Tween it down to the correct position
 		var duration = GRAVITY_ANIM_BASE + rows * GRAVITY_ANIM_PER_ROW
 		max_duration = max(max_duration, duration)
 
@@ -552,22 +713,18 @@ func _post_bomb_sequence():
 		tween.tween_property(node, "position:y", target_y, duration) \
 			.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
 
-	# 6. Wait for all fall animations to complete
 	if max_duration > 0:
 		await get_tree().create_timer(max_duration + 0.05).timeout
+		SoundManager.play_gravity_land()
 
-	# 7. Check if gravity/refill created a winning line
-	var winner = _check_board_for_any_win()
-	if winner != Player.NONE:
-		print("Player %s Wins (gravity created a line)!" % Player.keys()[winner])
-		hud.show_winner("Player %s" % Player.keys()[winner])
-		game_over = true
+	# Check if gravity/refill created a win or mutual draw
+	_handle_post_bomb_winner()
 
-	# 8. Check for draw
 	if not game_over and _check_for_draw():
 		print("It's a Draw!")
 		hud.show_draw()
 		game_over = true
+		SoundManager.play_draw()
 
 	_processing_bomb = false
 
@@ -577,16 +734,10 @@ func _post_bomb_sequence():
 # ============================================================
 
 func _apply_gravity_and_refill() -> Array:
-	## For each column, pack non-destroyed tiles to the bottom and
-	## fill the top with new empty tiles.
-	## Returns an array of {"node": tile_node, "rows": fall_distance}
-	## describing which tiles need drop animations.
-
 	var fall_info: Array = []
 	var bomb_types = [BombType.ROW, BombType.COLUMN, BombType.DIAGONAL]
 
 	for col_x in range(BOARD_WIDTH):
-		# Collect surviving (non-destroyed) tiles, preserving top-to-bottom order
 		var surviving: Array = []
 		for y in range(BOARD_HEIGHT):
 			if board_data[y][col_x] != Player.DESTROYED:
@@ -599,41 +750,31 @@ func _apply_gravity_and_refill() -> Array:
 		var num_new = BOARD_HEIGHT - surviving.size()
 
 		if num_new == 0:
-			continue  # No destroyed tiles in this column
+			continue
 
-		# Rebuild the column: new empty tiles at top, surviving packed to bottom
 		for y in range(BOARD_HEIGHT):
 			var tile_node = grid_container.get_child(y * BOARD_WIDTH + col_x)
 
 			if y < num_new:
-				# --- New tile dropping in from above ---
 				board_data[y][col_x] = Player.NONE
 				bomb_data[y][col_x] = null
 
-				# Small chance this new tile hides a bomb
 				if randf() < NEW_TILE_BOMB_CHANCE:
 					var rand_type = bomb_types[randi() % bomb_types.size()]
 					bomb_data[y][col_x] = rand_type
-					print("New tile at (%s, %s) has a hidden %s bomb!" % [col_x, y, BombType.keys()[rand_type]])
 
-				# Revive the tile node (in case it was vanished) and clear any mark
 				tile_node.revive()
 				tile_node.clear_mark()
 
-				# New tiles drop from off-screen above the board
-				# Top new tile (y=0) falls the furthest, bottom new tile (y=num_new-1) the least
 				fall_info.append({"node": tile_node, "rows": num_new - y + 1})
 
 			else:
-				# --- Surviving tile, possibly shifted downward ---
 				var entry = surviving[y - num_new]
 				var fall_rows = y - entry["from_row"]
 
-				# Update data arrays
 				board_data[y][col_x] = entry["state"]
 				bomb_data[y][col_x] = entry["bomb"]
 
-				# Sync this tile node's visual to match its new data
 				_sync_tile_visual(tile_node, entry["state"])
 
 				if fall_rows > 0:
@@ -643,8 +784,6 @@ func _apply_gravity_and_refill() -> Array:
 
 
 func _sync_tile_visual(tile_node, state):
-	## Set a tile node's appearance to match a board data state.
-	## Revives the node first in case it was visually destroyed.
 	tile_node.revive()
 
 	match state:

@@ -30,6 +30,7 @@ var cancel_btn: Button
 var overlay: ColorRect
 var result_label: Label
 var cpu_thinking_label: Label
+var pause_overlay: ColorRect
 
 # --- CPU mode ---
 var _cpu_mode = false
@@ -162,37 +163,58 @@ func _build_ui():
 	# Game-over overlay
 	_build_game_over_overlay(root)
 
+	# Pause/menu overlay
+	_build_pause_overlay(root)
+
 
 func _build_turn_indicator(parent: Control):
 	var panel = PanelContainer.new()
 	panel.add_theme_stylebox_override("panel", _make_panel_stylebox(COLOR_BG_PANEL, 10))
 	parent.add_child(panel)
 
-	var center = CenterContainer.new()
-	panel.add_child(center)
+	var outer_hbox = HBoxContainer.new()
+	outer_hbox.add_theme_constant_override("separation", 0)
+	panel.add_child(outer_hbox)
 
-	var hbox = HBoxContainer.new()
-	hbox.add_theme_constant_override("separation", 12)
-	center.add_child(hbox)
+	# Left spacer to center the turn info
+	var left_spacer = Control.new()
+	left_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer_hbox.add_child(left_spacer)
+
+	var center_hbox = HBoxContainer.new()
+	center_hbox.add_theme_constant_override("separation", 12)
+	outer_hbox.add_child(center_hbox)
 
 	turn_icon = TextureRect.new()
 	turn_icon.custom_minimum_size = Vector2(36, 36)
 	turn_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	turn_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	hbox.add_child(turn_icon)
+	center_hbox.add_child(turn_icon)
 
 	turn_label = Label.new()
 	turn_label.text = "'s Turn"
 	turn_label.add_theme_font_size_override("font_size", 22)
 	turn_label.add_theme_color_override("font_color", COLOR_TEXT)
-	hbox.add_child(turn_label)
+	center_hbox.add_child(turn_label)
 
 	cpu_thinking_label = Label.new()
 	cpu_thinking_label.text = "  thinking..."
 	cpu_thinking_label.add_theme_font_size_override("font_size", 16)
 	cpu_thinking_label.add_theme_color_override("font_color", COLOR_TEXT_DIM)
 	cpu_thinking_label.visible = false
-	hbox.add_child(cpu_thinking_label)
+	center_hbox.add_child(cpu_thinking_label)
+
+	# Right spacer + menu button
+	var right_spacer = Control.new()
+	right_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer_hbox.add_child(right_spacer)
+
+	var menu_btn = Button.new()
+	menu_btn.text = "Menu"
+	menu_btn.add_theme_font_size_override("font_size", 14)
+	_style_button(menu_btn, Color(0.2, 0.22, 0.26), Color(0.28, 0.3, 0.34))
+	menu_btn.pressed.connect(_on_pause_menu_pressed)
+	outer_hbox.add_child(menu_btn)
 
 
 func _build_armed_banner(parent: Control):
@@ -425,6 +447,68 @@ func remove_bomb(player: int, bomb_type: int):
 				if container.get_child_count() == 0:
 					_add_empty_hint(container)
 				return
+
+
+func _build_pause_overlay(parent: Control):
+	pause_overlay = ColorRect.new()
+	pause_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pause_overlay.color = Color(0.05, 0.05, 0.08, 0.8)
+	pause_overlay.visible = false
+	parent.add_child(pause_overlay)
+
+	var center = CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	pause_overlay.add_child(center)
+
+	var panel = PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", _make_panel_stylebox(COLOR_BG_DARK, 16, Color(0.3, 0.35, 0.4), 2))
+	center.add_child(panel)
+
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 16)
+	panel.add_child(vbox)
+
+	var title = Label.new()
+	title.text = "Paused"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 30)
+	title.add_theme_color_override("font_color", COLOR_TEXT)
+	vbox.add_child(title)
+
+	var btn_vbox = VBoxContainer.new()
+	btn_vbox.add_theme_constant_override("separation", 10)
+	vbox.add_child(btn_vbox)
+
+	var resume_btn = Button.new()
+	resume_btn.text = "Resume"
+	resume_btn.add_theme_font_size_override("font_size", 18)
+	_style_button(resume_btn, Color(0.2, 0.5, 0.8))
+	resume_btn.pressed.connect(func(): pause_overlay.visible = false; get_tree().paused = false)
+	btn_vbox.add_child(resume_btn)
+
+	var restart_btn = Button.new()
+	restart_btn.text = "Restart"
+	restart_btn.add_theme_font_size_override("font_size", 18)
+	_style_button(restart_btn, Color(0.25, 0.27, 0.3))
+	restart_btn.pressed.connect(func(): get_tree().paused = false; restart_requested.emit())
+	btn_vbox.add_child(restart_btn)
+
+	var menu_btn = Button.new()
+	menu_btn.text = "Main Menu"
+	menu_btn.add_theme_font_size_override("font_size", 18)
+	_style_button(menu_btn, Color(0.25, 0.27, 0.3))
+	menu_btn.pressed.connect(func(): get_tree().paused = false; menu_requested.emit())
+	btn_vbox.add_child(menu_btn)
+
+	# The pause overlay needs to process while the tree is paused
+	pause_overlay.process_mode = Node.PROCESS_MODE_ALWAYS
+
+
+func _on_pause_menu_pressed():
+	if overlay.visible:
+		return  # Don't pause during game-over
+	pause_overlay.visible = true
+	get_tree().paused = true
 
 
 # ============================================================

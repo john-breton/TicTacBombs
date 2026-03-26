@@ -27,6 +27,7 @@ var selected_win_length = 0
 var selected_fullscreen = 0  # 0=Off, 1=On
 var selected_vsync = 1       # 0=Off, 1=On
 var selected_window_size = 1 # index into GameSettings.WINDOW_SIZE_LABELS
+var selected_sound = 1       # 0=Off, 1=On
 
 # --- Button group references ---
 var mode_buttons: Array = []
@@ -37,6 +38,7 @@ var win_length_buttons: Array = []
 var fullscreen_buttons: Array = []
 var vsync_buttons: Array = []
 var window_size_buttons: Array = []
+var sound_buttons: Array = []
 
 # --- Dynamic rows ---
 var difficulty_row: HBoxContainer
@@ -50,6 +52,7 @@ func _ready():
 	selected_fullscreen = 1 if GameSettings.fullscreen else 0
 	selected_vsync = 1 if GameSettings.vsync else 0
 	selected_window_size = GameSettings.window_size_index
+	selected_sound = 1 if GameSettings.sound_enabled else 0
 
 	_build_ui()
 
@@ -165,6 +168,9 @@ func _build_ui():
 	vsync_buttons = _build_option_row(gfx_vbox, "VSync",
 		["Off", "On"], selected_vsync, _on_vsync_selected)
 
+	sound_buttons = _build_option_row(gfx_vbox, "Sound",
+		["Off", "On"], selected_sound, _on_sound_selected)
+
 	# ---- Play Button ----
 	_add_spacer(main_vbox, 8)
 
@@ -178,6 +184,18 @@ func _build_ui():
 	play_btn.pressed.connect(_on_play_pressed)
 	btn_center.add_child(play_btn)
 	play_btn.grab_focus()
+
+	_add_spacer(main_vbox, 4)
+
+	var quit_center = CenterContainer.new()
+	main_vbox.add_child(quit_center)
+
+	var quit_btn = Button.new()
+	quit_btn.text = "Quit"
+	quit_btn.add_theme_font_size_override("font_size", 16)
+	_style_quit_button(quit_btn)
+	quit_btn.pressed.connect(func(): get_tree().quit())
+	quit_center.add_child(quit_btn)
 
 
 # ============================================================
@@ -308,6 +326,13 @@ func _on_vsync_selected(idx: int):
 	GameSettings.save_settings()
 
 
+func _on_sound_selected(idx: int):
+	selected_sound = idx
+	_update_option_group(sound_buttons, idx)
+	GameSettings.sound_enabled = (idx == 1)
+	GameSettings.save_settings()
+
+
 # ============================================================
 #  PLAY
 # ============================================================
@@ -345,6 +370,29 @@ func _style_play_button(btn: Button):
 		btn.add_theme_stylebox_override(state_name, sb)
 
 	btn.add_theme_color_override("font_color", COLOR_TEXT)
+	btn.add_theme_color_override("font_hover_color", COLOR_TEXT)
+
+
+func _style_quit_button(btn: Button):
+	for state_name in ["normal", "hover", "pressed"]:
+		var sb = StyleBoxFlat.new()
+		sb.corner_radius_top_left = 6
+		sb.corner_radius_top_right = 6
+		sb.corner_radius_bottom_left = 6
+		sb.corner_radius_bottom_right = 6
+		sb.content_margin_left = 24
+		sb.content_margin_right = 24
+		sb.content_margin_top = 8
+		sb.content_margin_bottom = 8
+
+		match state_name:
+			"normal": sb.bg_color = Color(0.18, 0.2, 0.24)
+			"hover": sb.bg_color = Color(0.35, 0.15, 0.15)
+			"pressed": sb.bg_color = Color(0.25, 0.1, 0.1)
+
+		btn.add_theme_stylebox_override(state_name, sb)
+
+	btn.add_theme_color_override("font_color", COLOR_TEXT_DIM)
 	btn.add_theme_color_override("font_hover_color", COLOR_TEXT)
 
 

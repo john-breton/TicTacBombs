@@ -17,11 +17,12 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 config/name="TicTacBombs"
 run/main_scene="res://Scenes/MainMenu.tscn"
 config/features=PackedStringArray("4.6", "Mobile")
-config/icon="res://icon.svg"
+config/icon="uid://c68vy70l37oq6"
 
 [autoload]
 
 GameSettings="*res://Scripts/GameSettings.gd"
+SoundManager="*res://Scripts/SoundManager.gd"
 
 [rendering]
 
