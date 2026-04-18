@@ -7,6 +7,7 @@ signal bomb_selected(bomb_type: int)
 signal bomb_cancelled
 signal restart_requested
 signal menu_requested
+signal next_puzzle_requested
 
 # --- Textures (assigned via setup()) ---
 var x_texture: Texture2D
@@ -24,16 +25,26 @@ var x_bomb_container: HBoxContainer
 var o_bomb_container: HBoxContainer
 var x_label: Label
 var o_label: Label
+var x_panel: PanelContainer
+var o_panel: PanelContainer
 var armed_banner: PanelContainer
 var armed_label: Label
 var cancel_btn: Button
 var overlay: ColorRect
 var result_label: Label
+var overlay_button_bar: HBoxContainer
 var cpu_thinking_label: Label
 var pause_overlay: ColorRect
 
 # --- CPU mode ---
 var _cpu_mode = false
+
+# --- Puzzle mode ---
+var _puzzle_mode = false
+var _puzzle_max_moves: int = 0
+var puzzle_panel: PanelContainer
+var puzzle_moves_label: Label
+var puzzle_rule_label: Label
 
 # --- Constants ---
 const BOMB_NAMES = ["Row", "Column", "Diagonal"]
@@ -250,7 +261,7 @@ func _build_inventory_bar(parent: Control):
 	parent.add_child(bar)
 
 	# --- Player X panel (left) ---
-	var x_panel = PanelContainer.new()
+	x_panel = PanelContainer.new()
 	x_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	x_panel.add_theme_stylebox_override("panel", _make_panel_stylebox(COLOR_BG_PANEL, 10, COLOR_ACCENT_X.darkened(0.3), 2))
 	bar.add_child(x_panel)
@@ -278,7 +289,7 @@ func _build_inventory_bar(parent: Control):
 	x_bomb_container.add_child(x_empty_hint)
 
 	# --- Player O panel (right) ---
-	var o_panel = PanelContainer.new()
+	o_panel = PanelContainer.new()
 	o_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	o_panel.add_theme_stylebox_override("panel", _make_panel_stylebox(COLOR_BG_PANEL, 10, COLOR_ACCENT_O.darkened(0.3), 2))
 	bar.add_child(o_panel)
@@ -333,24 +344,35 @@ func _build_game_over_overlay(parent: Control):
 	result_label.add_theme_color_override("font_color", COLOR_TEXT)
 	vbox.add_child(result_label)
 
-	var btn_hbox = HBoxContainer.new()
-	btn_hbox.add_theme_constant_override("separation", 12)
-	btn_hbox.alignment = BoxContainer.ALIGNMENT_CENTER
-	vbox.add_child(btn_hbox)
+	overlay_button_bar = HBoxContainer.new()
+	overlay_button_bar.add_theme_constant_override("separation", 12)
+	overlay_button_bar.alignment = BoxContainer.ALIGNMENT_CENTER
+	vbox.add_child(overlay_button_bar)
+
+	_build_default_overlay_buttons()
+
+
+func _build_default_overlay_buttons():
+	_clear_overlay_buttons()
 
 	var play_btn = Button.new()
 	play_btn.text = "Play Again"
 	play_btn.add_theme_font_size_override("font_size", 18)
 	_style_button(play_btn, Color(0.2, 0.5, 0.8))
 	play_btn.pressed.connect(func(): restart_requested.emit())
-	btn_hbox.add_child(play_btn)
+	overlay_button_bar.add_child(play_btn)
 
 	var menu_btn = Button.new()
 	menu_btn.text = "Main Menu"
 	menu_btn.add_theme_font_size_override("font_size", 18)
 	_style_button(menu_btn, Color(0.25, 0.27, 0.3))
 	menu_btn.pressed.connect(func(): menu_requested.emit())
-	btn_hbox.add_child(menu_btn)
+	overlay_button_bar.add_child(menu_btn)
+
+
+func _clear_overlay_buttons():
+	for child in overlay_button_bar.get_children():
+		child.queue_free()
 
 
 # ============================================================
@@ -424,6 +446,147 @@ func set_cpu_mode(enabled: bool):
 	if enabled:
 		o_label.text = "CPU"
 		_set_bombs_clickable(o_bomb_container, false)
+
+
+# ============================================================
+#  PUZZLE MODE
+# ============================================================
+
+## Reconfigure the HUD for puzzle mode: hide opponent, show puzzle info.
+func setup_puzzle_mode(puzzle_name: String, max_moves: int):
+	_puzzle_mode = true
+	_puzzle_max_moves = max_moves
+
+	# Top bar: drop CPU placeholder; show puzzle name instead of "'s Turn".
+	turn_icon.visible = false
+	turn_label.text = puzzle_name
+	turn_label.add_theme_color_override("font_color", COLOR_ACCENT_X)
+	cpu_thinking_label.visible = false
+
+	# Swap the opponent inventory for a puzzle-info panel.
+	o_panel.visible = false
+	x_label.text = "BOMBS"
+	x_side.modulate.a = 1.0
+
+	_build_puzzle_info_panel()
+
+
+func _build_puzzle_info_panel():
+	# Parent bar is x_panel.get_parent() (the inventory HBoxContainer).
+	var bar = x_panel.get_parent()
+
+	puzzle_panel = PanelContainer.new()
+	puzzle_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	puzzle_panel.add_theme_stylebox_override("panel",
+		_make_panel_stylebox(COLOR_BG_PANEL, 10, Color(0.35, 0.38, 0.45), 2))
+	bar.add_child(puzzle_panel)
+
+	var vbox = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 8)
+	puzzle_panel.add_child(vbox)
+
+	var header = Label.new()
+	header.text = "PUZZLE"
+	header.add_theme_font_size_override("font_size", 16)
+	header.add_theme_color_override("font_color", COLOR_TEXT_DIM)
+	header.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	vbox.add_child(header)
+
+	var info_row = HBoxContainer.new()
+	info_row.add_theme_constant_override("separation", 20)
+	info_row.alignment = BoxContainer.ALIGNMENT_END
+	info_row.custom_minimum_size.y = 48
+	vbox.add_child(info_row)
+
+	puzzle_rule_label = Label.new()
+	puzzle_rule_label.text = "Get 3 in a row"
+	puzzle_rule_label.add_theme_font_size_override("font_size", 18)
+	puzzle_rule_label.add_theme_color_override("font_color", COLOR_TEXT)
+	info_row.add_child(puzzle_rule_label)
+
+	var sep = VSeparator.new()
+	sep.add_theme_color_override("separator", Color(0.25, 0.27, 0.32))
+	info_row.add_child(sep)
+
+	puzzle_moves_label = Label.new()
+	puzzle_moves_label.text = "Moves: 0 / %d" % _puzzle_max_moves
+	puzzle_moves_label.add_theme_font_size_override("font_size", 20)
+	puzzle_moves_label.add_theme_color_override("font_color", COLOR_ACCENT_X)
+	info_row.add_child(puzzle_moves_label)
+
+
+## Refresh the move counter. Tinted red on the final allowed move.
+func update_puzzle_moves(moves_used: int):
+	if not _puzzle_mode or puzzle_moves_label == null:
+		return
+	puzzle_moves_label.text = "Moves: %d / %d" % [moves_used, _puzzle_max_moves]
+	var remaining = _puzzle_max_moves - moves_used
+	if remaining <= 0:
+		puzzle_moves_label.add_theme_color_override("font_color", Color(1.0, 0.5, 0.4))
+	elif remaining == 1:
+		puzzle_moves_label.add_theme_color_override("font_color", Color(1.0, 0.8, 0.3))
+	else:
+		puzzle_moves_label.add_theme_color_override("font_color", COLOR_ACCENT_X)
+
+
+## Configure the puzzle-rule label (e.g. "Get 4 in a row"). Optional.
+func set_puzzle_rule(text: String):
+	if puzzle_rule_label:
+		puzzle_rule_label.text = text
+
+
+## Show the game-over overlay for a solved puzzle.
+func show_puzzle_solved(has_next: bool):
+	result_label.text = "Puzzle Solved!"
+	result_label.add_theme_color_override("font_color", Color(0.6, 1.0, 0.6))
+	_clear_overlay_buttons()
+
+	var retry_btn = Button.new()
+	retry_btn.text = "Replay"
+	retry_btn.add_theme_font_size_override("font_size", 18)
+	_style_button(retry_btn, Color(0.25, 0.27, 0.3))
+	retry_btn.pressed.connect(func(): restart_requested.emit())
+	overlay_button_bar.add_child(retry_btn)
+
+	if has_next:
+		var next_btn = Button.new()
+		next_btn.text = "Next Puzzle"
+		next_btn.add_theme_font_size_override("font_size", 18)
+		_style_button(next_btn, Color(0.2, 0.5, 0.8))
+		next_btn.pressed.connect(func(): next_puzzle_requested.emit())
+		overlay_button_bar.add_child(next_btn)
+
+	var list_btn = Button.new()
+	list_btn.text = "Puzzle List"
+	list_btn.add_theme_font_size_override("font_size", 18)
+	_style_button(list_btn, Color(0.25, 0.27, 0.3))
+	list_btn.pressed.connect(func(): menu_requested.emit())
+	overlay_button_bar.add_child(list_btn)
+
+	overlay.visible = true
+
+
+## Show the game-over overlay for a failed puzzle attempt.
+func show_puzzle_failed():
+	result_label.text = "Out of Moves"
+	result_label.add_theme_color_override("font_color", Color(1.0, 0.6, 0.5))
+	_clear_overlay_buttons()
+
+	var retry_btn = Button.new()
+	retry_btn.text = "Retry"
+	retry_btn.add_theme_font_size_override("font_size", 18)
+	_style_button(retry_btn, Color(0.2, 0.5, 0.8))
+	retry_btn.pressed.connect(func(): restart_requested.emit())
+	overlay_button_bar.add_child(retry_btn)
+
+	var list_btn = Button.new()
+	list_btn.text = "Puzzle List"
+	list_btn.add_theme_font_size_override("font_size", 18)
+	_style_button(list_btn, Color(0.25, 0.27, 0.3))
+	list_btn.pressed.connect(func(): menu_requested.emit())
+	overlay_button_bar.add_child(list_btn)
+
+	overlay.visible = true
 
 
 ## Show or hide the "thinking..." indicator next to the turn label.

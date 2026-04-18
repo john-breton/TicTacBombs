@@ -5,6 +5,7 @@ signal tile_hovered(pos: Vector2i)
 signal tile_unhovered(pos: Vector2i)
 
 var is_empty = true
+var is_disabled = false
 var grid_position = Vector2i(0, 0)
 
 @onready var mark_sprite = $MarkSprite
@@ -60,6 +61,19 @@ func vanish():
 	self.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	is_empty = false
 	_clear_all_highlights()
+
+
+## Render this tile as a non-existent cell: invisible, unclickable, but still
+## reserves grid space so the surrounding layout stays aligned.
+func set_disabled():
+	is_disabled = true
+	is_empty = false
+	texture = null
+	modulate = Color(1, 1, 1, 0)
+	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var mark = get_node_or_null("MarkSprite")
+	if mark:
+		mark.modulate = Color(1, 1, 1, 0)
 
 
 ## Restore a vanished tile to a fresh, clickable, empty state.

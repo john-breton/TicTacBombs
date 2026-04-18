@@ -185,6 +185,18 @@ func _build_ui():
 	btn_center.add_child(play_btn)
 	play_btn.grab_focus()
 
+	_add_spacer(main_vbox, 6)
+
+	var puzzle_center = CenterContainer.new()
+	main_vbox.add_child(puzzle_center)
+
+	var puzzle_btn = Button.new()
+	puzzle_btn.text = "Puzzles"
+	puzzle_btn.add_theme_font_size_override("font_size", 20)
+	_style_puzzle_button(puzzle_btn)
+	puzzle_btn.pressed.connect(_on_puzzles_pressed)
+	puzzle_center.add_child(puzzle_btn)
+
 	_add_spacer(main_vbox, 4)
 
 	var quit_center = CenterContainer.new()
@@ -346,6 +358,10 @@ func _on_play_pressed():
 	get_tree().change_scene_to_file("res://Scenes/GameBoard.tscn")
 
 
+func _on_puzzles_pressed():
+	get_tree().change_scene_to_file("res://Scenes/PuzzleSelect.tscn")
+
+
 # ============================================================
 #  STYLING
 # ============================================================
@@ -366,6 +382,30 @@ func _style_play_button(btn: Button):
 			"normal": sb.bg_color = COLOR_ACCENT
 			"hover": sb.bg_color = COLOR_ACCENT.lightened(0.12)
 			"pressed": sb.bg_color = COLOR_ACCENT.darkened(0.1)
+
+		btn.add_theme_stylebox_override(state_name, sb)
+
+	btn.add_theme_color_override("font_color", COLOR_TEXT)
+	btn.add_theme_color_override("font_hover_color", COLOR_TEXT)
+
+
+func _style_puzzle_button(btn: Button):
+	var puzzle_accent = Color(0.55, 0.35, 0.75)
+	for state_name in ["normal", "hover", "pressed"]:
+		var sb = StyleBoxFlat.new()
+		sb.corner_radius_top_left = 8
+		sb.corner_radius_top_right = 8
+		sb.corner_radius_bottom_left = 8
+		sb.corner_radius_bottom_right = 8
+		sb.content_margin_left = 36
+		sb.content_margin_right = 36
+		sb.content_margin_top = 10
+		sb.content_margin_bottom = 10
+
+		match state_name:
+			"normal": sb.bg_color = puzzle_accent
+			"hover": sb.bg_color = puzzle_accent.lightened(0.12)
+			"pressed": sb.bg_color = puzzle_accent.darkened(0.1)
 
 		btn.add_theme_stylebox_override(state_name, sb)
 

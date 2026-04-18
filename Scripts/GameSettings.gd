@@ -2,7 +2,7 @@ extends Node
 
 ## Global game settings — autoloaded as "GameSettings".
 
-enum PlayMode { LOCAL, VS_CPU }
+enum PlayMode { LOCAL, VS_CPU, PUZZLE }
 enum CPUDifficulty { EASY, MEDIUM, HARD }
 
 # --- Game Settings ---
@@ -11,6 +11,9 @@ var num_bombs: int = 5
 var win_length: int = 3
 var play_mode: int = PlayMode.LOCAL
 var cpu_difficulty: int = CPUDifficulty.MEDIUM
+
+# --- Puzzle Mode ---
+var current_puzzle_id: int = 1
 
 # --- Graphics Settings ---
 var fullscreen: bool = false

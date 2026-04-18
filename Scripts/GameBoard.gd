@@ -10,7 +10,7 @@ extends Node2D
 @export var num_bombs = 5
 
 # --- Game State ---
-enum Player { NONE, X, O, DESTROYED }
+enum Player { NONE, X, O, DESTROYED, DISABLED }
 var current_player = Player.X
 var game_over = false
 
@@ -40,6 +40,12 @@ var cpu_player: Node = null
 const CPU_DELAY_MIN = 0.4
 const CPU_DELAY_MAX = 0.8
 
+# --- Puzzle Mode ---
+var puzzle_mode = false
+var current_puzzle: Dictionary = {}
+var moves_used: int = 0
+var max_moves: int = 0
+
 # --- Gravity ---
 var _processing_bomb = false
 const NEW_TILE_BOMB_CHANCE = 0.08
@@ -55,10 +61,16 @@ var _previewed_tiles: Array = []
 func _ready():
 	RenderingServer.set_default_clear_color(Color(0.1, 0.1, 0.13))
 
-	BOARD_WIDTH = GameSettings.board_size
-	BOARD_HEIGHT = GameSettings.board_size
-	WIN_LENGTH = GameSettings.win_length
-	num_bombs = GameSettings.num_bombs
+	puzzle_mode = (GameSettings.play_mode == GameSettings.PlayMode.PUZZLE)
+
+	if puzzle_mode:
+		_setup_puzzle_dimensions()
+	else:
+		BOARD_WIDTH = GameSettings.board_size
+		BOARD_HEIGHT = GameSettings.board_size
+		WIN_LENGTH = GameSettings.win_length
+		num_bombs = GameSettings.num_bombs
+
 	grid_container.columns = BOARD_WIDTH
 
 	vs_cpu = (GameSettings.play_mode == GameSettings.PlayMode.VS_CPU)
@@ -70,21 +82,92 @@ func _ready():
 		cpu_player.setup(self)
 
 	create_board_data()
-	place_hidden_bombs()
+	if puzzle_mode:
+		_apply_puzzle_board()
+	else:
+		place_hidden_bombs()
 	create_board()
+	if puzzle_mode:
+		_apply_puzzle_visuals()
 	_center_board()
 
 	get_tree().root.size_changed.connect(_center_board)
 
 	hud.setup(x_texture, o_texture)
-	hud.update_turn(current_player)
 	hud.bomb_selected.connect(_on_hud_bomb_selected)
 	hud.bomb_cancelled.connect(_on_hud_bomb_cancelled)
 	hud.restart_requested.connect(_on_restart)
 	hud.menu_requested.connect(_on_main_menu)
+	hud.next_puzzle_requested.connect(_on_next_puzzle)
+
+	if puzzle_mode:
+		hud.setup_puzzle_mode(current_puzzle["name"], max_moves)
+		_populate_puzzle_bombs()
+		hud.update_puzzle_moves(moves_used)
+	else:
+		hud.update_turn(current_player)
 
 	if vs_cpu:
 		hud.set_cpu_mode(true)
+
+
+# ============================================================
+#  PUZZLE MODE SETUP
+# ============================================================
+
+func _setup_puzzle_dimensions():
+	var catalog = load("res://Scripts/PuzzleCatalog.gd")
+	current_puzzle = catalog.get_puzzle(GameSettings.current_puzzle_id)
+	BOARD_WIDTH = current_puzzle.get("width", 3)
+	BOARD_HEIGHT = current_puzzle.get("height", 3)
+	WIN_LENGTH = current_puzzle.get("win_length", 3)
+	max_moves = current_puzzle.get("max_moves", 1)
+	moves_used = 0
+
+
+func _apply_puzzle_board():
+	var board: Array = current_puzzle.get("board", [])
+	for y in range(BOARD_HEIGHT):
+		for x in range(BOARD_WIDTH):
+			var cell = _puzzle_cell_at(board, x, y)
+			match cell:
+				-1:  # TILE_DISABLED
+					board_data[y][x] = Player.DISABLED
+				1:   # TILE_X
+					board_data[y][x] = Player.X
+				2:   # TILE_O
+					board_data[y][x] = Player.O
+				_:   # TILE_EMPTY
+					board_data[y][x] = Player.NONE
+
+
+func _apply_puzzle_visuals():
+	for y in range(BOARD_HEIGHT):
+		for x in range(BOARD_WIDTH):
+			var tile_node = grid_container.get_child(y * BOARD_WIDTH + x)
+			match board_data[y][x]:
+				Player.DISABLED:
+					tile_node.set_disabled()
+				Player.X:
+					tile_node.set_mark(x_texture)
+				Player.O:
+					tile_node.set_mark(o_texture)
+
+
+func _populate_puzzle_bombs():
+	player_x_bombs.clear()
+	for bomb_type in current_puzzle.get("bombs", []):
+		player_x_bombs.append(bomb_type)
+		hud.add_bomb(Player.X, bomb_type)
+
+
+func _puzzle_cell_at(board: Array, x: int, y: int) -> int:
+	if y < 0 or y >= board.size():
+		return 0
+	var row = board[y]
+	if x < 0 or x >= row.size():
+		return 0
+	return row[x]
 
 
 # --- Center and scale the board to fit the viewport ---
@@ -176,11 +259,12 @@ func check_for_win(last_move_pos: Vector2i, player: Player) -> bool:
 		Vector2i(1, 0), Vector2i(0, 1),
 		Vector2i(1, 1), Vector2i(1, -1)
 	]
+	var max_len = max(BOARD_WIDTH, BOARD_HEIGHT)
 
 	for dir in directions:
 		var count = 1
 
-		for i in range(1, BOARD_WIDTH):
+		for i in range(1, max_len):
 			var check_pos = last_move_pos + dir * i
 			if not _is_valid_pos(check_pos):
 				break
@@ -192,7 +276,7 @@ func check_for_win(last_move_pos: Vector2i, player: Player) -> bool:
 			else:
 				break
 
-		for i in range(1, BOARD_WIDTH):
+		for i in range(1, max_len):
 			var check_pos = last_move_pos - dir * i
 			if not _is_valid_pos(check_pos):
 				break
@@ -216,11 +300,12 @@ func get_winning_positions(start_pos: Vector2i, player: Player) -> Array:
 		Vector2i(1, 0), Vector2i(0, 1),
 		Vector2i(1, 1), Vector2i(1, -1)
 	]
+	var max_len = max(BOARD_WIDTH, BOARD_HEIGHT)
 
 	for dir in directions:
 		var positions: Array = [start_pos]
 
-		for i in range(1, BOARD_WIDTH):
+		for i in range(1, max_len):
 			var check_pos = start_pos + dir * i
 			if not _is_valid_pos(check_pos):
 				break
@@ -232,7 +317,7 @@ func get_winning_positions(start_pos: Vector2i, player: Player) -> Array:
 			else:
 				break
 
-		for i in range(1, BOARD_WIDTH):
+		for i in range(1, max_len):
 			var check_pos = start_pos - dir * i
 			if not _is_valid_pos(check_pos):
 				break
@@ -391,19 +476,23 @@ func _get_bomb_affected_positions(bomb_type, target_pos: Vector2i) -> Array:
 	match bomb_type:
 		BombType.ROW:
 			for bx in range(BOARD_WIDTH):
-				if board_data[target_pos.y][bx] != Player.DESTROYED:
+				var state = board_data[target_pos.y][bx]
+				if state != Player.DESTROYED and state != Player.DISABLED:
 					positions.append(Vector2i(bx, target_pos.y))
 		BombType.COLUMN:
 			for by in range(BOARD_HEIGHT):
-				if board_data[by][target_pos.x] != Player.DESTROYED:
+				var state = board_data[by][target_pos.x]
+				if state != Player.DESTROYED and state != Player.DISABLED:
 					positions.append(Vector2i(target_pos.x, by))
 		BombType.DIAGONAL:
 			for dir in [Vector2i(1, 1), Vector2i(1, -1)]:
 				for i in range(-BOARD_WIDTH, BOARD_WIDTH):
 					var p = target_pos + dir * i
-					if _is_valid_pos(p) and board_data[p.y][p.x] != Player.DESTROYED:
-						if not p in positions:
-							positions.append(p)
+					if _is_valid_pos(p):
+						var state = board_data[p.y][p.x]
+						if state != Player.DESTROYED and state != Player.DISABLED:
+							if not p in positions:
+								positions.append(p)
 
 	return positions
 
@@ -428,6 +517,8 @@ func _on_tile_clicked(pos: Vector2i):
 	if current_game_mode == GameMode.USING_BOMB:
 		if board_data[pos.y][pos.x] == Player.DESTROYED:
 			return
+		if board_data[pos.y][pos.x] == Player.DISABLED:
+			return
 
 		_clear_bomb_preview()
 		_use_bomb_on_tile(pos)
@@ -436,9 +527,15 @@ func _on_tile_clicked(pos: Vector2i):
 		current_game_mode = GameMode.PLACING_MARK
 		armed_bomb_type = null
 
+		if puzzle_mode:
+			moves_used += 1
+			hud.update_puzzle_moves(moves_used)
+
 		await _post_bomb_sequence()
 
-		if not game_over:
+		if puzzle_mode:
+			_check_puzzle_state()
+		elif not game_over:
 			_switch_player()
 
 	elif current_game_mode == GameMode.PLACING_MARK:
@@ -458,23 +555,34 @@ func _place_mark(pos: Vector2i, player: Player):
 
 	SoundManager.play_place_mark()
 
+	if puzzle_mode:
+		moves_used += 1
+		hud.update_puzzle_moves(moves_used)
+
 	if check_for_win(pos, player):
 		print("Player %s Wins!" % Player.keys()[player])
-		_highlight_win_line(player)
-		hud.show_winner("Player %s" % Player.keys()[player])
-		game_over = true
-		SoundManager.play_win()
+		if puzzle_mode:
+			_on_puzzle_solved()
+		else:
+			_highlight_win_line(player)
+			hud.show_winner("Player %s" % Player.keys()[player])
+			game_over = true
+			SoundManager.play_win()
 
 	check_for_hidden_bomb(pos, player)
 
-	if not game_over:
-		if _check_for_draw():
-			print("It's a Draw!")
-			hud.show_draw()
-			game_over = true
-			SoundManager.play_draw()
-		else:
-			_switch_player()
+	if game_over:
+		return
+
+	if puzzle_mode:
+		_check_puzzle_state()
+	elif _check_for_draw():
+		print("It's a Draw!")
+		hud.show_draw()
+		game_over = true
+		SoundManager.play_draw()
+	else:
+		_switch_player()
 
 
 # --- Switch turns ---
@@ -607,7 +715,60 @@ func _on_restart():
 
 
 func _on_main_menu():
-	get_tree().change_scene_to_file("res://Scenes/MainMenu.tscn")
+	if puzzle_mode:
+		get_tree().change_scene_to_file("res://Scenes/PuzzleSelect.tscn")
+	else:
+		get_tree().change_scene_to_file("res://Scenes/MainMenu.tscn")
+
+
+func _on_next_puzzle():
+	var catalog = load("res://Scripts/PuzzleCatalog.gd")
+	var next_puzzle = catalog.get_next_puzzle(current_puzzle.get("id", 0))
+	if not next_puzzle.is_empty():
+		GameSettings.current_puzzle_id = next_puzzle["id"]
+		get_tree().reload_current_scene()
+
+
+# ============================================================
+#  PUZZLE STATE RESOLUTION
+# ============================================================
+
+func _check_puzzle_state():
+	if game_over:
+		return
+
+	if _puzzle_x_has_won():
+		_on_puzzle_solved()
+	elif moves_used >= max_moves:
+		_on_puzzle_failed()
+
+
+func _puzzle_x_has_won() -> bool:
+	for y in range(BOARD_HEIGHT):
+		for x in range(BOARD_WIDTH):
+			if board_data[y][x] == Player.X:
+				if check_for_win(Vector2i(x, y), Player.X):
+					return true
+	return false
+
+
+func _on_puzzle_solved():
+	if game_over:
+		return
+	game_over = true
+	_highlight_win_line(Player.X)
+	SoundManager.play_win()
+	var catalog = load("res://Scripts/PuzzleCatalog.gd")
+	var has_next = not catalog.get_next_puzzle(current_puzzle.get("id", 0)).is_empty()
+	hud.show_puzzle_solved(has_next)
+
+
+func _on_puzzle_failed():
+	if game_over:
+		return
+	game_over = true
+	SoundManager.play_draw()
+	hud.show_puzzle_failed()
 
 
 # ============================================================
@@ -654,6 +815,8 @@ func _destroy_tile(pos: Vector2i):
 		return
 	if board_data[pos.y][pos.x] == Player.DESTROYED:
 		return
+	if board_data[pos.y][pos.x] == Player.DISABLED:
+		return
 
 	board_data[pos.y][pos.x] = Player.DESTROYED
 
@@ -682,6 +845,12 @@ func _post_bomb_sequence():
 	await get_tree().create_timer(0.45).timeout
 
 	if game_over:
+		_processing_bomb = false
+		return
+
+	# Puzzle mode: no gravity, no refill — destroyed tiles stay destroyed.
+	# The caller runs _check_puzzle_state() once this returns.
+	if puzzle_mode:
 		_processing_bomb = false
 		return
 
